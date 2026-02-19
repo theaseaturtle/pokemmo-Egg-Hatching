@@ -88,7 +88,7 @@ st.markdown("""
         gap: 8px;
         margin-bottom: 8px;
         align-items: center;
-        border: 1px solid #E0E0E0;
+        border: none;
         border-radius: 6px;
         padding: 5px;
         background-color: #FAFAFA;
@@ -187,7 +187,11 @@ with st.expander("配置", expanded=True):
     st.markdown('<div class="config-label" style="margin-top: 10px;">目标性格</div>', unsafe_allow_html=True)
     target_nature = st.selectbox("目标性格", natures, label_visibility="collapsed")
 
-    cost_gender_control = st.number_input("锁性别单价", value=5000, step=1000)
+    # 道具价格配置
+    st.markdown('<div class="config-label" style="margin-top: 10px;">道具单价配置</div>', unsafe_allow_html=True)
+    col_p1, col_p2 = st.columns(2)
+    everstone_price = col_p1.number_input("不变之石单价 (金币)", min_value=0, value=20000, step=500)
+    power_item_bp = 750 # 固定 BP 价格
 
 # --- 双按钮布局 ---
 c_btn1, c_btn2 = st.columns(2)
@@ -241,6 +245,15 @@ if btn_normal:
         root['gender_req'] = "任意"
         calc_gender(root)
 
+        # 统计全流程具体道具总数 (提前计算以供素材列表使用)
+        total_locks = defaultdict(int)
+        def count_all_locks(n):
+            if n['type'] == 'leaf': return
+            count_all_locks(n['left']); count_all_locks(n['right'])
+            total_locks[n['l_lock']] += 1
+            total_locks[n['r_lock']] += 1
+        count_all_locks(root)
+
         # 阶段 0
         st.markdown('<div class="stage-title">■ 阶段 0 >>> 1 </div>', unsafe_allow_html=True)
         stats_count = defaultdict(lambda: {'母': 0, '公': 0})
@@ -249,7 +262,7 @@ if btn_normal:
                 stats_count[n['node_name']][n['gender_req']] += 1
             elif n['type'] != 'leaf': scan_mats(n['left']); scan_mats(n['right'])
         scan_mats(root)
-        
+
         mat_html = '<div>'
         total_mat_count = 0
         total_mat_cost = 0
@@ -267,16 +280,29 @@ if btn_normal:
         st.markdown(mat_html, unsafe_allow_html=True)
 
         # 成本清单
-        total_power_items_cost = (total_mat_count - 1) * 2 * 10000
+        num_everstones = total_locks['性格']
+        num_power_items = sum(v for k, v in total_locks.items() if k != '性格')
+        
+        total_everstone_cost = num_everstones * everstone_price
+        total_power_gold_cost = num_power_items * 10000
         total_breeding_fee = (total_mat_count - 1) * 1000
-        gender_cost = cost_gender_control if has_nature else 0
-        total_sum = total_mat_cost + total_power_items_cost + total_breeding_fee + gender_cost
+        
+        # 方案 A: 全金币
+        total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee
+        # 方案 B: 金币 + BP
+        total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee
+        total_sum_mixed_bp = num_power_items * power_item_bp
+
         v_count = len(selected_stats)
         nature_display = target_nature.split(" ")[0] if has_nature else "随机"
-        cost_html = f'<div class="info-box bg-tip"><b>费用成本清单 (目标 {v_count}V/{nature_display}):</b><br>'
-        cost_html += f'1V素材总成本: {total_mat_cost:,}<br>锁属性道具总成本: ({total_mat_count}-1)x2x10,000 = {total_power_items_cost:,}<br>'
-        cost_html += f'孵化费用总成本: {total_mat_count-1}x1,000 = {total_breeding_fee:,}<br>控制性别道具成本: {gender_cost:,}<br>'
-        cost_html += f'<b>总计预估: {total_sum:,} 金币</b></div>'
+        
+        lock_detail_str = " | ".join([f"不变之石(性格) x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()])
+
+        cost_html = f'<div class="info-box bg-tip">费用成本清单 (目标 {v_count}V/{nature_display}):<br>'
+        cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee:,} 金币<br>'
+        cost_html += f'2. 道具清单: {lock_detail_str}<br><hr style="margin:5px 0;">'
+        cost_html += f'方案 A (全金币购买):<br>威力道具 {num_power_items}个 x 10,000 = {total_power_gold_cost:,} 金币<br>总计: {total_sum_gold:,} 金币<br><br>'
+        cost_html += f'方案 B (金币 + BP换取):<br>威力道具 {num_power_items}个 x {power_item_bp} BP = {total_sum_mixed_bp:,} BP<br>总计: {total_sum_mixed_gold:,} 金币 + {total_sum_mixed_bp:,} BP</div>'
         st.markdown(cost_html, unsafe_allow_html=True)
 
         # 合成阶段
@@ -301,8 +327,8 @@ if btn_normal:
             st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
             
             step = steps_in_group[0]
-            l_nm = ("1V " if step['left']['type']=='leaf' else "") + step['left']['node_name']
-            r_nm = ("1V " if step['right']['type']=='leaf' else "") + step['right']['node_name']
+            l_nm = step['left']['node_name']
+            r_nm = step['right']['node_name']
             
             # 动态替换性格名称
             l_lock_name = target_nature.split(" ")[0] if step["l_lock"] == "性格" else step["l_lock"]
@@ -346,6 +372,15 @@ if btn_genderless:
         final_list = build_slots(total_items, has_nature, selected_stats)
         root = build_tree_structure(final_list, 0, len(final_list)-1)
         
+        # 统计全流程具体道具总数 (无性别，提前计算)
+        total_locks_no_gen = defaultdict(int)
+        def count_all_locks_no_gen(n):
+            if n['type'] == 'leaf': return
+            count_all_locks_no_gen(n['left']); count_all_locks_no_gen(n['right'])
+            total_locks_no_gen[n['l_lock']] += 1
+            total_locks_no_gen[n['r_lock']] += 1
+        count_all_locks_no_gen(root)
+
         # 无性别渲染
         st.markdown('<div class="stage-title">■ 阶段 0 >>> 1</div>', unsafe_allow_html=True)
         
@@ -357,7 +392,7 @@ if btn_genderless:
                 scan_mats_no_gender(n['left'])
                 scan_mats_no_gender(n['right'])
         scan_mats_no_gender(root)
-        
+
         mat_html = '<div>'
         total_mat_count = 0
         total_mat_cost = 0
@@ -376,15 +411,29 @@ if btn_genderless:
         st.markdown(mat_html, unsafe_allow_html=True)
 
         # 成本清单 (无性别)
-        total_power_items_cost = (total_mat_count - 1) * 2 * 10000
+        num_everstones_no_gen = total_locks_no_gen['性格']
+        num_power_items_no_gen = sum(v for k, v in total_locks_no_gen.items() if k != '性格')
+
+        total_everstone_cost_no_gen = num_everstones_no_gen * everstone_price
+        total_power_gold_cost_no_gen = num_power_items_no_gen * 10000
         total_breeding_fee = (total_mat_count - 1) * 1000
-        total_sum = total_mat_cost + total_power_items_cost + total_breeding_fee
+
+        # 方案 A: 全金币
+        total_sum_gold_no_gen = total_mat_cost + total_everstone_cost_no_gen + total_power_gold_cost_no_gen + total_breeding_fee
+        # 方案 B: 金币 + BP
+        total_sum_mixed_gold_no_gen = total_mat_cost + total_everstone_cost_no_gen + total_breeding_fee
+        total_sum_mixed_bp_no_gen = num_power_items_no_gen * power_item_bp
+
         v_count = len(selected_stats)
         nature_display = target_nature.split(" ")[0] if has_nature else "随机"
-        cost_html = f'<div class="info-box bg-tip"><b>费用成本清单 (无性别 {v_count}V/{nature_display}):</b><br>'
-        cost_html += f'1V素材总成本: {total_mat_cost:,}<br>锁属性道具总成本: ({total_mat_count}-1)x2x10,000 = {total_power_items_cost:,}<br>'
-        cost_html += f'孵化费用总成本: {total_mat_count-1}x1,000 = {total_breeding_fee:,}<br>'
-        cost_html += f'<b>总计预估: {total_sum:,} 金币</b></div>'
+
+        lock_detail_str_no_gen = " | ".join([f"不变之石(性格) x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks_no_gen.items()])
+
+        cost_html = f'<div class="info-box bg-tip">费用成本清单 (无性别 {v_count}V/{nature_display}):<br>'
+        cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost_no_gen:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost_no_gen + total_breeding_fee:,} 金币<br>'
+        cost_html += f'2. 道具清单: {lock_detail_str_no_gen}<br><hr style="margin:5px 0;">'
+        cost_html += f'方案 A (全金币购买):<br>威力道具 {num_power_items_no_gen}个 x 10,000 = {total_power_gold_cost_no_gen:,} 金币<br>总计: {total_sum_gold_no_gen:,} 金币<br><br>'
+        cost_html += f'方案 B (金币 + BP换取):<br>威力道具 {num_power_items_no_gen}个 x {power_item_bp} BP = {total_sum_mixed_bp_no_gen:,} BP<br>总计: {total_sum_mixed_gold_no_gen:,} 金币 + {total_sum_mixed_bp_no_gen:,} BP</div>'
         st.markdown(cost_html, unsafe_allow_html=True)
 
         all_steps = []
@@ -408,14 +457,14 @@ if btn_genderless:
             st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
             
             step = steps_in_group[0]
-            l_nm = ("1V " if step['left']['type']=='leaf' else "") + step['left']['node_name']
-            r_nm = ("1V " if step['right']['type']=='leaf' else "") + step['right']['node_name']
+            l_nm = step['left']['node_name']
+            r_nm = step['right']['node_name']
             
             # 动态替换性格名称 (无性别)
             l_lock_name = target_nature.split(" ")[0] if step["l_lock"] == "性格" else step["l_lock"]
             r_lock_name = target_nature.split(" ")[0] if step["r_lock"] == "性格" else step["r_lock"]
 
-            res_html = f'<div class="recipe-row"><div class="parent-card card-neutral">⚪ {l_nm}</div><div class="parent-card card-neutral">⚪ {r_nm}</div></div>'
+            res_html = f'<div class="recipe-row"><div class="parent-card card-neutral"> {l_nm}</div><div class="parent-card card-neutral"> {r_nm}</div></div>'
             res_html += f'<div class="lock-row"><div class="lock-card lock-card-left">左锁: [{l_lock_name}]</div><div class="lock-card lock-card-right">右锁: [{r_lock_name}]</div></div>'
             
             overlap = step['left']['traits_set'].intersection(step['right']['traits_set'])
