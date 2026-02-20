@@ -168,7 +168,7 @@ def get_pascals_coeffs(n):
     return line
 
 # --- 网页交互界面 ---
-st.markdown(""" # 大标题和GitHub图标已更新
+st.markdown("""
     <div style="display: flex; align-items: center; justify-content: space-between;">
         <div style="margin-bottom: 0; font-size: 2.25rem; font-weight: 600;">Pokemmo 孵蛋大师 1.4</div>
         <a href="https://github.com/theaseaturtle/pokemmo-Egg-Hatching" target="_blank">
