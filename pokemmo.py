@@ -1,8 +1,13 @@
 import streamlit as st
 from collections import defaultdict
 
+# --- 常量定义 ---
+POWER_ITEM_GOLD_PRICE = 10000
+BREEDING_FEE_PER_STEP = 1000
+POWER_ITEM_BP_PRICE = 750
+
 # 1. 页面基本配置
-st.set_page_config(page_title="Pokemmo 孵蛋 1.3", layout="wide")
+st.set_page_config(page_title="Pokemmo 孵蛋 1.4", layout="wide") # 已更新版本号
 
 # 2. 注入自定义 CSS 样式 (完全沿用 1.0 存档版)
 st.markdown("""
@@ -163,12 +168,19 @@ def get_pascals_coeffs(n):
     return line
 
 # --- 网页交互界面 ---
-st.title("Pokemmo 孵蛋大师 1.3")
+st.markdown(""" # 大标题和GitHub图标已更新
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div style="margin-bottom: 0; font-size: 2.25rem; font-weight: 600;">Pokemmo 孵蛋大师 1.4</div>
+        <a href="https://github.com/theaseaturtle/pokemmo-Egg-Hatching" target="_blank">
+            <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub" style="height: 2.25rem; vertical-align: middle;">
+        </a>
+    </div>
+""", unsafe_allow_html=True)
 
 # 配置区 (完全沿用 1.0 代码，不做任何改动)
 with st.expander("配置", expanded=True):
     # 添加“目标属性”小标题
-    st.markdown('<div class="config-label">目标属性</div>', unsafe_allow_html=True)
+    st.markdown('<div class="config-label">个体勾选</div>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     stats = ["生命", "攻击", "防御", "特攻", "特防", "速度"]
@@ -184,16 +196,18 @@ with st.expander("配置", expanded=True):
             stat_selection[stat] = {"on": is_on, "weight": weight, "price": price}
 
     # 目标性格
-    st.markdown('<div class="config-label" style="margin-top: 10px;">目标性格</div>', unsafe_allow_html=True)
-    target_nature = st.selectbox("目标性格", natures, label_visibility="collapsed")
+    st.markdown('<div class="config-label" style="margin-top: 10px;">性格选择</div>', unsafe_allow_html=True) # 标签已更新
+    col_nature1, col_nature2 = st.columns([0.7, 0.3])
+    with col_nature1:
+        target_nature = st.selectbox("目标性格", natures, label_visibility="collapsed")
+    with col_nature2:
+        nature_price = st.number_input("性格单价", min_value=0, value=5000, step=1000, key="p_nature", label_visibility="collapsed") # 性格单价已添加
 
     # 道具价格配置
-    st.markdown('<div class="config-label" style="margin-top: 10px;">道具单价配置</div>', unsafe_allow_html=True)
-    col_p1, col_p2 = st.columns(2)
-    everstone_price = col_p1.number_input("不变之石单价 (金币)", min_value=0, value=20000, step=500)
-    power_item_bp = 750 # 固定 BP 价格
+    st.markdown('<div class="config-label" style="margin-top: 10px;">不变之石</div>', unsafe_allow_html=True) # 标签已更新
+    everstone_price = st.number_input("不变之石", min_value=0, value=20000, step=500, label_visibility="collapsed") # 不变之石单价已更新
 
-# --- 双按钮布局 ---
+# --- 双按钮布局 --- 
 c_btn1, c_btn2 = st.columns(2)
 with c_btn1:
     btn_normal = st.button("生成孵蛋方案", type="primary", use_container_width=True)
@@ -207,12 +221,12 @@ def prepare_data():
     total_items = len(selected_stats) + (1 if has_nature else 0)
     return selected_stats, has_nature, total_items
 
-def build_slots(total_items, has_nature, selected_stats):
-    coeffs = get_pascals_coeffs(total_items - 1)
+def build_slots(total_items, has_nature, selected_stats, nature_price_val):
+    coeffs = get_pascals_coeffs(total_items - 1) # nature_price_val 参数已添加
     slots = [{"index": i, "count": count, "assigned": None} for i, count in enumerate(coeffs)]
     if has_nature:
-        slots[0]["assigned"] = {"name": target_nature.split(" ")[0], "prop": "性格", "weight": 999, "price": 0}
-    
+        slots[0]["assigned"] = {"name": target_nature.split(" ")[0], "prop": "性格", "weight": 999, "price": nature_price_val}
+
     available_slots = sorted([s for s in slots if s["assigned"] is None], key=lambda x: (x["count"], -x["index"]), reverse=True)
     selected_stats.sort(key=lambda x: x["weight"])
     for i, slot in enumerate(available_slots):
@@ -228,259 +242,209 @@ def build_tree_structure(traits, start, end):
     all_n = [t['name'] for t in traits[start:end+1]]
     return {"type": "node", "left": l, "right": r, "level": len(all_n), "res_name": "+".join(all_n), "node_name": "+".join(all_n), "l_lock": traits[start]['prop'], "r_lock": traits[end]['prop'], "traits_set": set(all_n)}
 
-# --- 逻辑 A: 正常孵蛋 (1.0 原版逻辑) ---
-if btn_normal:
-    selected_stats, has_nature, total_items = prepare_data()
-    if total_items < 2:
-        st.error("错误：请至少选择两个目标（如两个属性，或一个属性加性格）")
-    else:
-        final_list = build_slots(total_items, has_nature, selected_stats)
-        root = build_tree_structure(final_list, 0, len(final_list)-1)
-
-        def calc_gender(node):
+def _calc_gender_requirements(root_node):
+    """
+    递归计算并设置节点（宝可梦）的性别需求。
+    """
+    def calc_gender(node):
             if node['type'] == 'leaf': return
-            node['left']['gender_req'], node['right']['gender_req'] = "母", "公"
-            calc_gender(node['left']); calc_gender(node['right'])
+            node['left']['gender_req'], node['right']['gender_req'] = "母", "公" # 为左右子节点设置性别需求
+            calc_gender(node['left']); calc_gender(node['right']) # 递归调用
 
-        root['gender_req'] = "任意"
-        calc_gender(root)
+    root_node['gender_req'] = "任意" # 根节点性别需求为任意
+    calc_gender(root_node) # 从根节点开始计算性别
 
-        # 统计全流程具体道具总数 (提前计算以供素材列表使用)
-        total_locks = defaultdict(int)
-        def count_all_locks(n):
-            if n['type'] == 'leaf': return
-            count_all_locks(n['left']); count_all_locks(n['right'])
-            total_locks[n['l_lock']] += 1
-            total_locks[n['r_lock']] += 1
-        count_all_locks(root)
+def _count_all_locks(root_node):
+    """
+    统计整个孵蛋过程中所需的锁项道具数量。
+    """
+    total_locks = defaultdict(int)
+    def _traverse_and_count(n):
+        if n['type'] == 'leaf': return
+        _traverse_and_count(n['left']); _traverse_and_count(n['right']) # 递归遍历左右子节点
+        total_locks[n['l_lock']] += 1 # 统计左锁
+        total_locks[n['r_lock']] += 1 # 统计右锁
+    _traverse_and_count(root_node) # 从根节点开始遍历
+    return total_locks
 
-        # 阶段 0
-        st.markdown('<div class="stage-title">■ 阶段 0 >>> 1 </div>', unsafe_allow_html=True)
-        stats_count = defaultdict(lambda: {'母': 0, '公': 0})
-        def scan_mats(n):
-            if n['type'] == 'leaf' and n.get('gender_req', '任意') != '任意':
-                stats_count[n['node_name']][n['gender_req']] += 1
-            elif n['type'] != 'leaf': scan_mats(n['left']); scan_mats(n['right'])
-        scan_mats(root)
-
-        mat_html = '<div>'
-        total_mat_count = 0
-        total_mat_cost = 0
-        for i, t in enumerate(final_list):
-            n = t['name']; f, m = stats_count[n]['母'], stats_count[n]['公']
-            p = t.get('price', 0)
-            total_mat_count += (f + m)
-            total_mat_cost += (f + m) * p
-            mat_html += f'<div class="material-item-row">'
-            mat_html += f'<div class="material-item-name">{n} (权重:{t["weight"]})</div>'
-            mat_html += f'<div class="material-item-detail">总需: {f+m} 只</div>'
-            mat_html += f'<div class="material-item-detail">详情: {f}母 + {m}公</div>'
-            mat_html += f'<div class="material-item-detail">总价: {(f+m)*p:,}</div></div>'
-        mat_html += f'<div class="info-box bg-warn" style="margin-top:10px;">合计素材: {total_mat_count} 只</div></div>'
-        st.markdown(mat_html, unsafe_allow_html=True)
-
-        # 成本清单
-        num_everstones = total_locks['性格']
-        num_power_items = sum(v for k, v in total_locks.items() if k != '性格')
-        
-        total_everstone_cost = num_everstones * everstone_price
-        total_power_gold_cost = num_power_items * 10000
-        total_breeding_fee = (total_mat_count - 1) * 1000
-        
-        # 方案 A: 全金币
-        total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee
-        # 方案 B: 金币 + BP
-        total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee
-        total_sum_mixed_bp = num_power_items * power_item_bp
-
-        v_count = len(selected_stats)
-        nature_display = target_nature.split(" ")[0] if has_nature else "随机"
-        
-        lock_detail_str = " | ".join([f"不变之石(性格) x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()])
-
-        cost_html = f'<div class="info-box bg-tip">费用成本清单 (目标 {v_count}V/{nature_display}):<br>'
-        cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee:,} 金币<br>'
-        cost_html += f'2. 道具清单: {lock_detail_str}<br><hr style="margin:5px 0;">'
-        cost_html += f'方案 A (全金币购买):<br>威力道具 {num_power_items}个 x 10,000 = {total_power_gold_cost:,} 金币<br>总计: {total_sum_gold:,} 金币<br><br>'
-        cost_html += f'方案 B (金币 + BP换取):<br>威力道具 {num_power_items}个 x {power_item_bp} BP = {total_sum_mixed_bp:,} BP<br>总计: {total_sum_mixed_gold:,} 金币 + {total_sum_mixed_bp:,} BP</div>'
-        st.markdown(cost_html, unsafe_allow_html=True)
-
-        # 合成阶段
-        all_steps = []
-        def collect(n):
-            if n['type'] != 'leaf': collect(n['left']); collect(n['right']); all_steps.append(n)
-        collect(root)
-        all_steps.sort(key=lambda x: x['level'])
-        
-        grouped = defaultdict(list)
-        for s in all_steps: grouped[(s['level'], s['res_name'])].append(s)
-        
-        current_lvl = 0
-        sorted_keys = sorted(grouped.keys(), key=lambda x: x[0])
-        for i, (lvl, name) in enumerate(sorted_keys):
-            is_final = (i == len(sorted_keys) - 1)
-            steps_in_group = grouped[(lvl, name)]
-            if lvl > current_lvl:
-                current_lvl = lvl
-                st.markdown(f'<div class="stage-title">■ 阶段 {current_lvl-1} >>> {current_lvl}</div>', unsafe_allow_html=True)
-            
-            st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
-            
-            step = steps_in_group[0]
-            l_nm = step['left']['node_name']
-            r_nm = step['right']['node_name']
-            
-            # 动态替换性格名称
-            l_lock_name = target_nature.split(" ")[0] if step["l_lock"] == "性格" else step["l_lock"]
-            r_lock_name = target_nature.split(" ")[0] if step["r_lock"] == "性格" else step["r_lock"]
-
-            count = len(steps_in_group)
-            req_f = sum(1 for s in steps_in_group if "母" in s.get('gender_req', ''))
-            req_m = sum(1 for s in steps_in_group if "公" in s.get('gender_req', ''))
-
-            res_html = f'<div class="recipe-row"><div class="parent-card card-female">♀ {l_nm}</div><div class="parent-card card-male">♂ {r_nm}</div></div>'
-            res_html += f'<div class="lock-row"><div class="lock-card lock-card-left">母锁: [{l_lock_name}]</div><div class="lock-card lock-card-right">父锁: [{r_lock_name}]</div></div>'
-            
-            overlap = step['left']['traits_set'].intersection(step['right']['traits_set'])
-            
-            if not is_final:
-                res_html += f'<div class="stat-row"><div class="stat-card card-female">需母方: {req_f} 只</div><div class="stat-card card-male">需公方: {req_m} 只</div></div>'
-                if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
-
-                if "性格" in str(step['l_lock']) or "性格" in str(step['r_lock']):
-                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请锁{"母" if req_f else "公"}！</div></div>'
-                elif count >= 2:
-                    limit = count - max(req_f, req_m)
-                    if limit > 0: res_html += f'<div class="overlap-row"><div class="overlap-card bg-strat" style="border:none;">【策略】 省钱博弈(容错 {limit} 对)：先拿 {limit} 对不锁性别赌，剩下补齐。</div></div>'
-            else:
-                if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
-                if total_items < 7:
-                    res_html += f'<div class="overlap-row"><div class="overlap-card bg-tip" style="border:none;">【追梦提示】 成品推荐锁 ♀(母)，方便后续追梦高V。</div></div>'
-
-                st.markdown(res_html, unsafe_allow_html=True)
-                st.markdown(f'<div class="congrats-title">恭喜制作成功！祝你的宝可梦在赛场上大放异彩！</div>', unsafe_allow_html=True)
-                continue
-            
-            st.markdown(res_html, unsafe_allow_html=True)
-
-# --- 逻辑 B: 无性别孵蛋 (新逻辑) ---
-if btn_genderless:
-    selected_stats, has_nature, total_items = prepare_data()
-    if total_items < 2:
-        st.error("错误：请至少选择两个目标（如两个属性，或一个属性加性格）")
-    else:
-        final_list = build_slots(total_items, has_nature, selected_stats)
-        root = build_tree_structure(final_list, 0, len(final_list)-1)
-        
-        # 统计全流程具体道具总数 (无性别，提前计算)
-        total_locks_no_gen = defaultdict(int)
-        def count_all_locks_no_gen(n):
-            if n['type'] == 'leaf': return
-            count_all_locks_no_gen(n['left']); count_all_locks_no_gen(n['right'])
-            total_locks_no_gen[n['l_lock']] += 1
-            total_locks_no_gen[n['r_lock']] += 1
-        count_all_locks_no_gen(root)
-
-        # 无性别渲染
-        st.markdown('<div class="stage-title">■ 阶段 0 >>> 1</div>', unsafe_allow_html=True)
-        
-        stats_count = defaultdict(int)
-        def scan_mats_no_gender(n):
-            if n['type'] == 'leaf':
+def _render_material_list(root, final_list, is_genderless, stat_selection_data):
+    """
+    渲染素材清单。
+    """
+    st.markdown('<div class="stage-title">■ 阶段 0 >>> 1 </div>', unsafe_allow_html=True)
+    
+    stats_count = defaultdict(lambda: {'母': 0, '公': 0} if not is_genderless else 0)
+    def _scan_mats(n):
+        if n['type'] == 'leaf':
+            if is_genderless:
                 stats_count[n['node_name']] += 1
-            else:
-                scan_mats_no_gender(n['left'])
-                scan_mats_no_gender(n['right'])
-        scan_mats_no_gender(root)
+            elif n.get('gender_req', '任意') != '任意':
+                stats_count[n['node_name']][n['gender_req']] += 1
+        elif n['type'] != 'leaf':
+            _scan_mats(n['left']); _scan_mats(n['right'])
+    _scan_mats(root)
 
-        mat_html = '<div>'
-        total_mat_count = 0
-        total_mat_cost = 0
-        for i, t in enumerate(final_list):
-            n = t['name']
+    total_mat_count = 0
+    total_mat_cost = 0
+    mat_html = '<div>' # 修正：移除重复初始化
+    for t in final_list:
+        n = t['name']
+        p = t.get('price', 0)
+        mat_html += f'<div class="material-item-row">'
+        mat_html += f'<div class="material-item-name">{n} (权重:{t["weight"]})</div>'
+        
+        if is_genderless:
             c = stats_count[n]
-            p = t.get('price', 0)
             total_mat_count += c
             total_mat_cost += c * p
-            mat_html += f'<div class="material-item-row">'
-            mat_html += f'<div class="material-item-name">{n} (权重:{t["weight"]})</div>'
             mat_html += f'<div class="material-item-detail">总需: {c} 只</div>'
             mat_html += f'<div class="material-item-detail">详情: {c} 百变怪</div>'
             mat_html += f'<div class="material-item-detail">总价: {c*p:,}</div></div>'
-        mat_html += f'<div class="info-box bg-warn" style="margin-top:10px;">合计素材: {total_mat_count} 只</div></div>'
-        st.markdown(mat_html, unsafe_allow_html=True)
+        else:
+            f, m = stats_count[n]['母'], stats_count[n]['公']
+            total_mat_count += (f + m)
+            total_mat_cost += (f + m) * p
+            mat_html += f'<div class="material-item-detail">总需: {f+m} 只</div>'
+            mat_html += f'<div class="material-item-detail">详情: {f}母 + {m}公</div>'
+            mat_html += f'<div class="material-item-detail">总价: {(f+m)*p:,}</div></div>'
+    mat_html += f'<div class="info-box bg-warn" style="margin-top:10px;">合计素材: {total_mat_count} 只</div></div>'
+    st.markdown(mat_html, unsafe_allow_html=True)
+    return total_mat_count, total_mat_cost
 
-        # 成本清单 (无性别)
-        num_everstones_no_gen = total_locks_no_gen['性格']
-        num_power_items_no_gen = sum(v for k, v in total_locks_no_gen.items() if k != '性格')
+def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless):
+    """
+    渲染成本清单。
+    """
+    num_everstones = total_locks['性格']
+    num_power_items = sum(v for k, v in total_locks.items() if k != '性格')
+    
+    total_everstone_cost = num_everstones * everstone_price
+    total_power_gold_cost = num_power_items * POWER_ITEM_GOLD_PRICE
+    total_breeding_fee = (total_mat_count - 1) * BREEDING_FEE_PER_STEP
+    
+    # 方案 A: 全金币
+    total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee
+    # 方案 B: 金币 + BP
+    total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee
+    total_sum_mixed_bp = num_power_items * POWER_ITEM_BP_PRICE
 
-        total_everstone_cost_no_gen = num_everstones_no_gen * everstone_price
-        total_power_gold_cost_no_gen = num_power_items_no_gen * 10000
-        total_breeding_fee = (total_mat_count - 1) * 1000
+    v_count = len(selected_stats)
+    nature_display = target_nature.split(" ")[0] if has_nature else "随机"
+    
+    lock_detail_str = " | ".join([f"不变之石 x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()]) # 不变之石名称已更新
 
-        # 方案 A: 全金币
-        total_sum_gold_no_gen = total_mat_cost + total_everstone_cost_no_gen + total_power_gold_cost_no_gen + total_breeding_fee
-        # 方案 B: 金币 + BP
-        total_sum_mixed_gold_no_gen = total_mat_cost + total_everstone_cost_no_gen + total_breeding_fee
-        total_sum_mixed_bp_no_gen = num_power_items_no_gen * power_item_bp
+    cost_html = f'<div class="info-box bg-tip">费用成本清单 ({"无性别" if is_genderless else ""} 目标 {v_count}V/{nature_display}):<br>'
+    cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee:,} 金币<br>'
+    cost_html += f'2. 道具清单: {lock_detail_str}<br><hr style="margin:5px 0;">'
+    cost_html += f'方案 A (全金币购买):<br>狗环 {num_power_items}个 x {POWER_ITEM_GOLD_PRICE:,} = {total_power_gold_cost:,} 金币<br>总计: {total_sum_gold:,} 金币<br><br>'
+    cost_html += f'方案 B (金币 + BP换取):<br>狗环 {num_power_items}个 x {POWER_ITEM_BP_PRICE} BP = {total_sum_mixed_bp:,} BP<br>总计: {total_sum_mixed_gold:,} 金币 + {total_sum_mixed_bp:,} BP</div>'
+    st.markdown(cost_html, unsafe_allow_html=True)
 
-        v_count = len(selected_stats)
-        nature_display = target_nature.split(" ")[0] if has_nature else "随机"
-
-        lock_detail_str_no_gen = " | ".join([f"不变之石(性格) x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks_no_gen.items()])
-
-        cost_html = f'<div class="info-box bg-tip">费用成本清单 (无性别 {v_count}V/{nature_display}):<br>'
-        cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost_no_gen:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost_no_gen + total_breeding_fee:,} 金币<br>'
-        cost_html += f'2. 道具清单: {lock_detail_str_no_gen}<br><hr style="margin:5px 0;">'
-        cost_html += f'方案 A (全金币购买):<br>威力道具 {num_power_items_no_gen}个 x 10,000 = {total_power_gold_cost_no_gen:,} 金币<br>总计: {total_sum_gold_no_gen:,} 金币<br><br>'
-        cost_html += f'方案 B (金币 + BP换取):<br>威力道具 {num_power_items_no_gen}个 x {power_item_bp} BP = {total_sum_mixed_bp_no_gen:,} BP<br>总计: {total_sum_mixed_gold_no_gen:,} 金币 + {total_sum_mixed_bp_no_gen:,} BP</div>'
-        st.markdown(cost_html, unsafe_allow_html=True)
-
-        all_steps = []
-        def collect(n):
-            if n['type'] != 'leaf': collect(n['left']); collect(n['right']); all_steps.append(n)
-        collect(root)
-        all_steps.sort(key=lambda x: x['level'])
+def _render_breeding_steps(root, total_items, is_genderless, target_nature):
+    """
+    渲染孵蛋合成步骤。
+    """
+    all_steps = []
+    def collect(n):
+        if n['type'] != 'leaf': collect(n['left']); collect(n['right']); all_steps.append(n)
+    collect(root)
+    all_steps.sort(key=lambda x: x['level'])
+    
+    grouped = defaultdict(list)
+    for s in all_steps: grouped[(s['level'], s['res_name'])].append(s)
+    
+    current_lvl = 0
+    sorted_keys = sorted(grouped.keys(), key=lambda x: x[0])
+    for i, (lvl, name) in enumerate(sorted_keys):
+        is_final = (i == len(sorted_keys) - 1)
+        steps_in_group = grouped[(lvl, name)]
+        if lvl > current_lvl:
+            current_lvl = lvl
+            st.markdown(f'<div class="stage-title">■ 阶段 {current_lvl-1} >>> {current_lvl}</div>', unsafe_allow_html=True)
         
-        grouped = defaultdict(list)
-        for s in all_steps: grouped[(s['level'], s['res_name'])].append(s)
+        st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
         
-        current_lvl = 0
-        sorted_keys = sorted(grouped.keys(), key=lambda x: x[0])
-        for i, (lvl, name) in enumerate(sorted_keys):
-            is_final = (i == len(sorted_keys) - 1)
-            steps_in_group = grouped[(lvl, name)]
-            if lvl > current_lvl:
-                current_lvl = lvl
-                st.markdown(f'<div class="stage-title">■ 阶段 {current_lvl-1} >>> {current_lvl}</div>', unsafe_allow_html=True)
-            
-            st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
-            
-            step = steps_in_group[0]
-            l_nm = step['left']['node_name']
-            r_nm = step['right']['node_name']
-            
-            # 动态替换性格名称 (无性别)
-            l_lock_name = target_nature.split(" ")[0] if step["l_lock"] == "性格" else step["l_lock"]
-            r_lock_name = target_nature.split(" ")[0] if step["r_lock"] == "性格" else step["r_lock"]
+        step = steps_in_group[0]
+        l_nm = step['left']['node_name']
+        r_nm = step['right']['node_name']
+        
+        # 动态替换性格名称
+        l_lock_name = target_nature.split(" ")[0] if step["l_lock"] == "性格" else step["l_lock"]
+        r_lock_name = target_nature.split(" ")[0] if step["r_lock"] == "性格" else step["r_lock"]
 
-            res_html = f'<div class="recipe-row"><div class="parent-card card-neutral"> {l_nm}</div><div class="parent-card card-neutral"> {r_nm}</div></div>'
+        res_html = ""
+        if is_genderless:
+            res_html += f'<div class="recipe-row"><div class="parent-card card-neutral"> {l_nm}</div><div class="parent-card card-neutral"> {r_nm}</div></div>'
             res_html += f'<div class="lock-row"><div class="lock-card lock-card-left">左锁: [{l_lock_name}]</div><div class="lock-card lock-card-right">右锁: [{r_lock_name}]</div></div>'
+        else:
+            res_html += f'<div class="recipe-row"><div class="parent-card card-female">♀ {l_nm}</div><div class="parent-card card-male">♂ {r_nm}</div></div>'
+            res_html += f'<div class="lock-row"><div class="lock-card lock-card-left">母锁: [{l_lock_name}]</div><div class="lock-card lock-card-right">父锁: [{r_lock_name}]</div></div>'
+        
+        overlap = step['left']['traits_set'].intersection(step['right']['traits_set'])
+        
+        if not is_final:
+            if not is_genderless:
+                count = len(steps_in_group)
+                req_f = sum(1 for s in steps_in_group if "母" in s.get('gender_req', ''))
+                req_m = sum(1 for s in steps_in_group if "公" in s.get('gender_req', ''))
+                res_html += f'<div class="stat-row"><div class="stat-card card-female">需母方: {req_f} 只</div><div class="stat-card card-male">需公方: {req_m} 只</div></div>'
             
-            overlap = step['left']['traits_set'].intersection(step['right']['traits_set'])
-            
-            # 移除了统计栏和策略栏
-            if not is_final:
-                if "性格" in str(step['l_lock']) or "性格" in str(step['r_lock']):
-                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请检查！</div></div>'
-                if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
-            else:
-                if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
-                if total_items < 7:
-                    res_html += f'<div class="overlap-row"><div class="overlap-card bg-tip" style="border:none;">【追梦提示】 成品推荐锁 ♀(母)，方便后续追梦高V。</div></div>'
+            if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
 
-                st.markdown(res_html, unsafe_allow_html=True)
-                st.markdown(f'<div class="congrats-title">恭喜制作成功！祝你的宝可梦在赛场上大放异彩！</div>', unsafe_allow_html=True)
-                continue
-            
+            if "性格" in str(step['l_lock']) or "性格" in str(step['r_lock']):
+                if is_genderless:
+                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请检查！</div></div>'
+                else:
+                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请锁{"母" if req_f else "公"}！</div></div>'
+            elif not is_genderless and count >= 2:
+                limit = count - max(req_f, req_m)
+                if limit > 0: res_html += f'<div class="overlap-row"><div class="overlap-card bg-strat" style="border:none;">【策略】 省钱博弈(容错 {limit} 对)：先拿 {limit} 对不锁性别赌，剩下补齐。</div></div>'
+            elif not is_genderless and count == 1 and not ("性格" in str(step['l_lock']) or "性格" in str(step['r_lock'])):
+                # 这是一个非性格的独立遗传步骤，且只制作一个
+                lock_gender_text = ""
+                if req_f > 0: # 如果结果子代需要是母方
+                    lock_gender_text = "母" # 已更新为“母”
+                elif req_m > 0: # 如果结果子代需要是公方
+                    lock_gender_text = "公" # 已更新为“公”
+                
+                if lock_gender_text:
+                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及独立遗传，严禁博弈！请锁{lock_gender_text}！</div></div>'
+        else:
+            if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
+            if total_items < 7:
+                res_html += f'<div class="overlap-row"><div class="overlap-card bg-tip" style="border:none;">【追梦提示】 成品推荐锁 ♀(母)，方便后续追梦高V。</div></div>'
+
             st.markdown(res_html, unsafe_allow_html=True)
+            st.markdown(f'<div class="congrats-title">恭喜制作成功！祝你的宝可梦在赛场上大放异彩！</div>', unsafe_allow_html=True)
+            return # Final step, no further rendering for this group
+        
+        st.markdown(res_html, unsafe_allow_html=True)
+
+def generate_breeding_plan(is_genderless, stat_selection, target_nature, everstone_price):
+    """
+    生成孵蛋方案的主逻辑，根据是否无性别进行调整。
+    """
+    selected_stats, has_nature, total_items = prepare_data()
+    if total_items < 2:
+        st.error("错误：请至少选择两个目标（如两个属性，或一个属性加性格）")
+        return
+
+    final_list = build_slots(total_items, has_nature, selected_stats, nature_price)
+    root = build_tree_structure(final_list, 0, len(final_list)-1)
+
+    if not is_genderless:
+        _calc_gender_requirements(root)
+
+    total_locks = _count_all_locks(root)
+
+    total_mat_count, total_mat_cost = _render_material_list(root, final_list, is_genderless, stat_selection)
+    _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless)
+    _render_breeding_steps(root, total_items, is_genderless, target_nature)
+
+# --- 逻辑 A: 正常孵蛋 ---
+if btn_normal:
+    generate_breeding_plan(False, stat_selection, target_nature, everstone_price)
+
+# --- 逻辑 B: 无性别孵蛋 ---
+if btn_genderless:
+    generate_breeding_plan(True, stat_selection, target_nature, everstone_price)
