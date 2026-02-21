@@ -7,7 +7,7 @@ BREEDING_FEE_PER_STEP = 1000
 POWER_ITEM_BP_PRICE = 750
 
 # 1. 页面基本配置
-st.set_page_config(page_title="Pokemmo 孵蛋 1.4", layout="wide") # 已更新版本号
+st.set_page_config(page_title="Pokemmo 孵蛋 1.5", layout="wide")
 
 # 2. 注入自定义 CSS 样式 (完全沿用 1.0 存档版)
 st.markdown("""
@@ -104,13 +104,25 @@ st.markdown("""
         background-color: #F0F0F0;
         color: #333;
         font-weight: bold;
+        flex: 1; /* 使其平均分配宽度 */
+        min-width: 120px; /* 确保在换行前有最小宽度 */
     }
     .material-item-detail {
         padding: 5px 10px;
         border-radius: 4px;
         background-color: #F0F0F0;
         color: #555;
-        flex-grow: 1;
+        flex: 1; /* 使其平均分配宽度 */
+        min-width: 120px; /* 确保在换行前有最小宽度 */
+    }
+    .material-item-lock {
+        padding: 5px 10px;
+        border-radius: 4px;
+        background-color: #F0F0F0; /* 统一背景色 */
+        color: #555; /* 统一文字颜色 */
+        font-weight: bold;
+        flex: 1;
+        min-width: 120px;
     }
 
     /* --- 通用信息块样式 (统一背景与圆角) --- */
@@ -170,7 +182,7 @@ def get_pascals_coeffs(n):
 # --- 网页交互界面 ---
 st.markdown("""
     <div style="display: flex; align-items: center; justify-content: space-between;">
-        <div style="margin-bottom: 0; font-size: 2.25rem; font-weight: 600;">Pokemmo 孵蛋大师 1.4</div>
+        <div style="margin-bottom: 0; font-size: 2.25rem; font-weight: 600;">Pokemmo 孵蛋大师 1.5</div>
         <a href="https://github.com/theaseaturtle/pokemmo-Egg-Hatching" target="_blank">
             <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub" style="height: 2.25rem; vertical-align: middle;">
         </a>
@@ -206,6 +218,10 @@ with st.expander("配置", expanded=True):
     # 道具价格配置
     st.markdown('<div class="config-label" style="margin-top: 10px;">不变之石</div>', unsafe_allow_html=True) # 标签已更新
     everstone_price = st.number_input("不变之石", min_value=0, value=20000, step=500, label_visibility="collapsed") # 不变之石单价已更新
+
+    # 性别选择道具单价
+    st.markdown('<div class="config-label" style="margin-top: 10px;">性别选择</div>', unsafe_allow_html=True)
+    gender_control_price = st.number_input("性别选择", min_value=0, value=5000, step=1000, label_visibility="collapsed")
 
 # --- 双按钮布局 --- 
 c_btn1, c_btn2 = st.columns(2)
@@ -245,14 +261,21 @@ def build_tree_structure(traits, start, end):
 def _calc_gender_requirements(root_node):
     """
     递归计算并设置节点（宝可梦）的性别需求。
+        `gender_req` on a node indicates the gender required for the *offspring* produced by the sub-tree rooted at this node.
     """
-    def calc_gender(node):
-            if node['type'] == 'leaf': return
-            node['left']['gender_req'], node['right']['gender_req'] = "母", "公" # 为左右子节点设置性别需求
-            calc_gender(node['left']); calc_gender(node['right']) # 递归调用
+    # Pre-order traversal to set gender requirements based on parent's needs.
+    def _set_gender_req_recursive(node, required_gender_for_output="任意"):
+        node['gender_req'] = required_gender_for_output
 
-    root_node['gender_req'] = "任意" # 根节点性别需求为任意
-    calc_gender(root_node) # 从根节点开始计算性别
+        if node['type'] == 'leaf': return
+
+        # The left child of this node will be the 'female' parent in the next step.
+        # The right child of this node will be the 'male' parent in the next step.
+        # So, the *output* of the left sub-tree needs to be female, and right sub-tree needs to be male.
+        _set_gender_req_recursive(node['left'], "母")
+        _set_gender_req_recursive(node['right'], "公")
+
+    _set_gender_req_recursive(root_node, "任意") # Root's output gender is arbitrary
 
 def _count_all_locks(root_node):
     """
@@ -267,11 +290,11 @@ def _count_all_locks(root_node):
     _traverse_and_count(root_node) # 从根节点开始遍历
     return total_locks
 
-def _render_material_list(root, final_list, is_genderless, stat_selection_data):
+def _render_material_list(root, final_list, is_genderless, stat_selection_data, total_locks):
     """
     渲染素材清单。
     """
-    st.markdown('<div class="stage-title">■ 阶段 0 >>> 1 </div>', unsafe_allow_html=True)
+    st.markdown('<div class="stage-title">■ 阶段 0</div>', unsafe_allow_html=True)
     
     stats_count = defaultdict(lambda: {'母': 0, '公': 0} if not is_genderless else 0)
     def _scan_mats(n):
@@ -298,20 +321,26 @@ def _render_material_list(root, final_list, is_genderless, stat_selection_data):
             total_mat_count += c
             total_mat_cost += c * p
             mat_html += f'<div class="material-item-detail">总需: {c} 只</div>'
-            mat_html += f'<div class="material-item-detail">详情: {c} 百变怪</div>'
-            mat_html += f'<div class="material-item-detail">总价: {c*p:,}</div></div>'
+            if t['prop'] == '性格':
+                mat_html += f'<div class="material-item-detail">详情: {c} 本族</div>'
+            else:
+                mat_html += f'<div class="material-item-detail">详情: {c} 本族或百变怪</div>'
+            mat_html += f'<div class="material-item-detail">总价: {c*p:,}</div>'
         else:
             f, m = stats_count[n]['母'], stats_count[n]['公']
             total_mat_count += (f + m)
             total_mat_cost += (f + m) * p
             mat_html += f'<div class="material-item-detail">总需: {f+m} 只</div>'
             mat_html += f'<div class="material-item-detail">详情: {f}母 + {m}公</div>'
-            mat_html += f'<div class="material-item-detail">总价: {(f+m)*p:,}</div></div>'
+            mat_html += f'<div class="material-item-detail">总价: {(f+m)*p:,}</div>'
+        mat_html += '</div>' # Close material-item-row
+    
+    lock_detail_str = " | ".join([f"不变之石 x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()])
     mat_html += f'<div class="info-box bg-warn" style="margin-top:10px;">合计素材: {total_mat_count} 只</div></div>'
     st.markdown(mat_html, unsafe_allow_html=True)
     return total_mat_count, total_mat_cost
 
-def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless):
+def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless, gender_control_price):
     """
     渲染成本清单。
     """
@@ -323,9 +352,9 @@ def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone
     total_breeding_fee = (total_mat_count - 1) * BREEDING_FEE_PER_STEP
     
     # 方案 A: 全金币
-    total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee
+    total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee + gender_control_price
     # 方案 B: 金币 + BP
-    total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee
+    total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee + gender_control_price
     total_sum_mixed_bp = num_power_items * POWER_ITEM_BP_PRICE
 
     v_count = len(selected_stats)
@@ -334,10 +363,11 @@ def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone
     lock_detail_str = " | ".join([f"不变之石 x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()]) # 不变之石名称已更新
 
     cost_html = f'<div class="info-box bg-tip">费用成本清单 ({"无性别" if is_genderless else ""} 目标 {v_count}V/{nature_display}):<br>'
-    cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee:,} 金币<br>'
+    cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} + 性别选择 {gender_control_price:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee + gender_control_price:,} 金币<br>'
     cost_html += f'2. 道具清单: {lock_detail_str}<br><hr style="margin:5px 0;">'
     cost_html += f'方案 A (全金币购买):<br>狗环 {num_power_items}个 x {POWER_ITEM_GOLD_PRICE:,} = {total_power_gold_cost:,} 金币<br>总计: {total_sum_gold:,} 金币<br><br>'
     cost_html += f'方案 B (金币 + BP换取):<br>狗环 {num_power_items}个 x {POWER_ITEM_BP_PRICE} BP = {total_sum_mixed_bp:,} BP<br>总计: {total_sum_mixed_gold:,} 金币 + {total_sum_mixed_bp:,} BP</div>'
+    cost_html += f'<div class="info-box bg-warn" style="margin-top:10px;">【提示】 此清单计算出的金额仅供参考，实际情况可能存在较大出入。</div>'
     st.markdown(cost_html, unsafe_allow_html=True)
 
 def _render_breeding_steps(root, total_items, is_genderless, target_nature):
@@ -360,7 +390,7 @@ def _render_breeding_steps(root, total_items, is_genderless, target_nature):
         steps_in_group = grouped[(lvl, name)]
         if lvl > current_lvl:
             current_lvl = lvl
-            st.markdown(f'<div class="stage-title">■ 阶段 {current_lvl-1} >>> {current_lvl}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="stage-title">■ 阶段 {current_lvl - 1}</div>', unsafe_allow_html=True)
         
         st.markdown(f'<div class="task-header">■ 任务组: 制作 {len(steps_in_group)} 个 [{name}]</div>' if not is_final else f'<div class="task-header">■ 任务组: 制作最终成品 [{name}]</div>', unsafe_allow_html=True)
         
@@ -391,11 +421,8 @@ def _render_breeding_steps(root, total_items, is_genderless, target_nature):
             
             if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
 
-            if "性格" in str(step['l_lock']) or "性格" in str(step['r_lock']):
-                if is_genderless:
-                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请检查！</div></div>'
-                else:
-                    res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请锁{"母" if req_f else "公"}！</div></div>'
+            if ("性格" in str(step['l_lock']) or "性格" in str(step['r_lock'])) and not is_genderless:
+                res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及性格遗传，严禁博弈！请锁{"母" if req_f else "公"}！</div></div>'
             elif not is_genderless and count >= 2:
                 limit = count - max(req_f, req_m)
                 if limit > 0: res_html += f'<div class="overlap-row"><div class="overlap-card bg-strat" style="border:none;">【策略】 省钱博弈(容错 {limit} 对)：先拿 {limit} 对不锁性别赌，剩下补齐。</div></div>'
@@ -411,7 +438,7 @@ def _render_breeding_steps(root, total_items, is_genderless, target_nature):
                     res_html += f'<div class="stat-row"><div class="stat-card bg-warn" style="border:none;">【警告】 涉及独立遗传，严禁博弈！请锁{lock_gender_text}！</div></div>'
         else:
             if overlap: res_html += f'<div class="overlap-row"><div class="overlap-card overlap-card-style">重叠属性: {"+".join(list(overlap))} (必须均为31)</div></div>'
-            if total_items < 7:
+            if total_items < 7 and not is_genderless:
                 res_html += f'<div class="overlap-row"><div class="overlap-card bg-tip" style="border:none;">【追梦提示】 成品推荐锁 ♀(母)，方便后续追梦高V。</div></div>'
 
             st.markdown(res_html, unsafe_allow_html=True)
@@ -420,7 +447,7 @@ def _render_breeding_steps(root, total_items, is_genderless, target_nature):
         
         st.markdown(res_html, unsafe_allow_html=True)
 
-def generate_breeding_plan(is_genderless, stat_selection, target_nature, everstone_price):
+def generate_breeding_plan(is_genderless, stat_selection, target_nature, everstone_price, gender_control_price):
     """
     生成孵蛋方案的主逻辑，根据是否无性别进行调整。
     """
@@ -437,14 +464,40 @@ def generate_breeding_plan(is_genderless, stat_selection, target_nature, eversto
 
     total_locks = _count_all_locks(root)
 
-    total_mat_count, total_mat_cost = _render_material_list(root, final_list, is_genderless, stat_selection)
-    _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless)
+    total_gender_locks_needed = 0
+    if not is_genderless:
+        all_steps = []
+        def collect_all_steps(n):
+            if n['type'] != 'leaf':
+                collect_all_steps(n['left'])
+                collect_all_steps(n['right'])
+                all_steps.append(n) # all_steps contains parent nodes
+        collect_all_steps(root)
+        all_steps.sort(key=lambda x: x['level'])
+
+        grouped = defaultdict(list)
+        for s in all_steps:
+            grouped[(s['level'], s['res_name'])].append(s)
+
+        sorted_keys = sorted(grouped.keys(), key=lambda x: x[0])
+        for i, (lvl, name) in enumerate(sorted_keys):
+            is_final = (i == len(sorted_keys) - 1)
+            if not is_final: # Only count for intermediate steps
+                steps_in_group = grouped[(lvl, name)]
+                # Each required female or male offspring from an intermediate step needs a gender control item.
+                total_gender_locks_needed += sum(1 for s_node in steps_in_group if s_node.get('gender_req', '') == '母')
+                total_gender_locks_needed += sum(1 for s_node in steps_in_group if s_node.get('gender_req', '') == '公')
+
+    gender_control_cost_applied = total_gender_locks_needed * gender_control_price
+
+    total_mat_count, total_mat_cost = _render_material_list(root, final_list, is_genderless, stat_selection, total_locks)
+    _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone_price, selected_stats, has_nature, target_nature, is_genderless, gender_control_cost_applied)
     _render_breeding_steps(root, total_items, is_genderless, target_nature)
 
 # --- 逻辑 A: 正常孵蛋 ---
 if btn_normal:
-    generate_breeding_plan(False, stat_selection, target_nature, everstone_price)
+    generate_breeding_plan(False, stat_selection, target_nature, everstone_price, gender_control_price)
 
 # --- 逻辑 B: 无性别孵蛋 ---
 if btn_genderless:
-    generate_breeding_plan(True, stat_selection, target_nature, everstone_price)
+    generate_breeding_plan(True, stat_selection, target_nature, everstone_price, gender_control_price)
