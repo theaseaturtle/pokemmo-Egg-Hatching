@@ -336,7 +336,7 @@ def _render_material_list(root, final_list, is_genderless, stat_selection_data, 
         mat_html += '</div>' # Close material-item-row
     
     lock_detail_str = " | ".join([f"不变之石 x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()])
-    mat_html += f'<div class="info-box bg-warn" style="margin-top:10px;">合计素材: {total_mat_count} 只</div></div>'
+    mat_html += f'<div class="material-item-row" style="margin-top:10px;"><div class="material-item-name" style="text-align: center;">合计素材: {total_mat_count} 只</div></div></div>'
     st.markdown(mat_html, unsafe_allow_html=True)
     return total_mat_count, total_mat_cost
 
