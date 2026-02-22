@@ -3,7 +3,6 @@ from collections import defaultdict
 
 # --- 常量定义 ---
 POWER_ITEM_GOLD_PRICE = 10000
-BREEDING_FEE_PER_STEP = 1000
 POWER_ITEM_BP_PRICE = 750
 
 # 1. 页面基本配置
@@ -349,12 +348,11 @@ def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone
     
     total_everstone_cost = num_everstones * everstone_price
     total_power_gold_cost = num_power_items * POWER_ITEM_GOLD_PRICE
-    total_breeding_fee = (total_mat_count - 1) * BREEDING_FEE_PER_STEP
     
     # 方案 A: 全金币
-    total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + total_breeding_fee + gender_control_price
+    total_sum_gold = total_mat_cost + total_everstone_cost + total_power_gold_cost + gender_control_price
     # 方案 B: 金币 + BP
-    total_sum_mixed_gold = total_mat_cost + total_everstone_cost + total_breeding_fee + gender_control_price
+    total_sum_mixed_gold = total_mat_cost + total_everstone_cost + gender_control_price
     total_sum_mixed_bp = num_power_items * POWER_ITEM_BP_PRICE
 
     v_count = len(selected_stats)
@@ -363,7 +361,7 @@ def _render_cost_summary(total_mat_count, total_mat_cost, total_locks, everstone
     lock_detail_str = " | ".join([f"不变之石 x {v}" if k == '性格' else f"锁{k} x {v}" for k, v in total_locks.items()]) # 不变之石名称已更新
 
     cost_html = f'<div class="info-box bg-tip">费用成本清单 ({"无性别" if is_genderless else ""} 目标 {v_count}V/{nature_display}):<br>'
-    cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 孵化费 {total_breeding_fee:,} + 性别选择 {gender_control_price:,} = {total_mat_cost + total_everstone_cost + total_breeding_fee + gender_control_price:,} 金币<br>'
+    cost_html += f'1. 基础花费: 素材 {total_mat_cost:,} + 不变之石 {total_everstone_cost:,} + 性别选择 {gender_control_price:,} = {total_mat_cost + total_everstone_cost + gender_control_price:,} 金币<br>'
     cost_html += f'2. 道具清单: {lock_detail_str}<br><hr style="margin:5px 0;">'
     cost_html += f'方案 A (全金币购买):<br>狗环 {num_power_items}个 x {POWER_ITEM_GOLD_PRICE:,} = {total_power_gold_cost:,} 金币<br>总计: {total_sum_gold:,} 金币<br><br>'
     cost_html += f'方案 B (金币 + BP换取):<br>狗环 {num_power_items}个 x {POWER_ITEM_BP_PRICE} BP = {total_sum_mixed_bp:,} BP<br>总计: {total_sum_mixed_gold:,} 金币 + {total_sum_mixed_bp:,} BP</div>'
